@@ -84,6 +84,7 @@ Sessions isolate multiple monitors on the same server. Session name acts as a sh
 - Relay mode preserves PTT by bridging a dedicated audio transceiver through the server
 - Audio ducking reduces baby audio to 15% during PTT
 - STUN servers: stunprotocol.org, nextcloud.com, sipgate.net
+- Direct ICE config optionally fetches 24-hour Cloudflare TURN credentials server-side using CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_KEY_API_TOKEN; buildRtcConfig is async and falls back to public STUN on failure. Server Relay stays STUN-only. Clients retain config until page reload.
 - FFT-based spectral subtraction for music echo reduction
 - Auto-shutdown: Sender stops after timeout set by receiver (manual, no auto default)
 

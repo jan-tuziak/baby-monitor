@@ -312,7 +312,7 @@ baby-monitor/
 
 1. **Signaling Server** - Pure Node.js HTTP server uses Server-Sent Events (SSE) for connection setup
 2. **Peer-to-Peer Streaming** - Direct connection between devices for lowest-latency media
-3. **STUN Servers** - Public servers help browsers gather usable ICE candidates
+3. **STUN / TURN Servers** - Direct mode uses optional Cloudflare TURN when ICE cannot establish a peer-to-peer path, with public STUN as the configuration fallback
 4. **Optional Server Relay** - The Node server can bridge media through paired WebRTC peer connections when direct paths fail
 
 ### Connection Flow
@@ -326,9 +326,33 @@ baby-monitor/
 7. ICE candidates are exchanged
 8. Direct or server-relayed media connection established
 
+### Direct Mode with Cloudflare TURN (Railway)
+
+Keep the app on Railway and select **Direct** on the sender. In the Railway service's Variables tab, set:
+
+```text
+CLOUDFLARE_TURN_KEY_ID=<your Cloudflare Realtime TURN key ID>
+CLOUDFLARE_TURN_KEY_API_TOKEN=<the API token for that TURN key>
+```
+
+Redeploy, then open `https://<your-railway-domain>/api/webrtc-config?transport=direct`.
+The JSON should contain Cloudflare `stun:`, `turn:` and `turns:` URLs and temporary `username` / `credential` values.
+The backend uses Node's built-in `fetch` to request credentials with a TTL of 86400 seconds (24 hours), following [Cloudflare's credential API](https://developers.cloudflare.com/realtime/turn/generate-credentials/).
+The long-lived API token stays on the server and is never returned or logged. Config responses use `Cache-Control: no-store`.
+
+No relay-only policy is set: ICE prefers a viable direct path and can select TURN when necessary.
+If either variable is missing, or Cloudflare fails, returns invalid data, or exceeds the 10-second request timeout, the app logs a warning and uses its existing public STUN configuration.
+The configuration endpoint is public, as before; anyone able to access it can obtain temporary TURN credentials. Apply your deployment's access protection to this endpoint as well.
+
+To test, use Android Chrome on Wi-Fi as sender and iPhone Safari with Wi-Fi off as receiver, in the same session.
+Check audio/video and talk-back. A returned configuration verifies credential generation; an actual connection verifies the media path.
+Both pages retain their loaded configuration; reload both before reconnecting after the 24-hour credentials expire, or after fixing an initial STUN fallback. Automatic credential refresh is not implemented.
+
 ### Relay Mode
 
 If you choose **Server Relay** on the sender side, the app keeps WebRTC but replaces the direct browser-to-browser path with two browser-to-server peer connections. The Node server bridges sender media to each receiver and also bridges the PTT return audio back to the sender. Receivers learn the correct transport mode automatically from the active sender session before requesting an offer.
+
+Cloudflare TURN is used only by Direct mode. Server Relay still requires the Node host to support inbound WebRTC media traffic; use Direct with TURN on Railway.
 
 ### Push-to-Talk Flow
 
@@ -378,9 +402,9 @@ Add a `name.txt` file to each folder to give it a custom display name.
 ## Privacy & Security
 
 - **No data storage** - Video/audio is never recorded or persisted on the server
-- **Direct mode** - Only public STUN servers are contacted for NAT traversal
+- **Direct mode** - Uses Cloudflare STUN/TURN when configured; media can flow through Cloudflare TURN when a direct path is unavailable
 - **Relay mode** - Media goes through the built-in server relay on your infrastructure
-- **STUN servers used in direct mode**:
+- **Fallback STUN servers** (Cloudflare absent or unavailable):
   - `stun.stunprotocol.org:3478`
   - `stun.nextcloud.com:443`
   - `stun.sipgate.net:3478`
@@ -436,8 +460,8 @@ The app uses multiple keep-awake mechanisms (Wake Lock API, background video, si
 2. Ensure both devices can reach the server
 3. Try refreshing both pages (sender first, then receiver)
 4. Verify STUN servers are accessible (not blocked by firewall)
-5. If direct peer-to-peer is blocked, switch the start page to **Server Relay**
-6. Ensure the browser can still reach your Node server for WebRTC traffic
+5. If direct peer-to-peer is blocked on Railway, configure Cloudflare TURN and keep **Direct** selected
+6. Check `/api/webrtc-config?transport=direct` for TURN URLs and temporary credentials, then reload both pages
 
 ### No audio on parent talk-back (PTT)
 
@@ -480,7 +504,7 @@ WebRTC audio is classified as "communication audio" by mobile browsers, which ma
 - **Backend**: Node.js 21.x (pure http module, no frameworks)
 - **Frontend**: Vanilla JavaScript, WebRTC API
 - **Signaling**: Server-Sent Events (SSE) + HTTP POST
-- **NAT Traversal**: STUN (public servers) + optional built-in server-side WebRTC relay
+- **NAT Traversal**: Optional Cloudflare STUN/TURN in Direct mode, public STUN fallback, and optional built-in server-side WebRTC relay
 - **Deployment**: GitHub Actions with FTPS
 
 ## API Endpoints

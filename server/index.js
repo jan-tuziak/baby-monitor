@@ -106,7 +106,9 @@ function createServer(baseDir) {
             // WebRTC runtime config endpoint
             if (pathname === '/api/webrtc-config') {
                 const transport = query.transport === 'relay' ? 'relay' : 'direct';
-                return sendJson(res, buildRtcConfig({ transport }));
+                const rtcConfig = await buildRtcConfig({ transport });
+                res.setHeader('Cache-Control', 'no-store');
+                return sendJson(res, rtcConfig);
             }
 
             // Page routes

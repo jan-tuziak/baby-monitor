@@ -60,14 +60,60 @@ function getRelayError() {
     return relayLoadError;
 }
 
-function buildRtcConfig(options = {}) {
+async function getCloudflareIceServers() {
+    const keyId = process.env.CLOUDFLARE_TURN_KEY_ID;
+    const apiToken = process.env.CLOUDFLARE_TURN_KEY_API_TOKEN;
+
+    if (!keyId || !apiToken) {
+        console.warn('Cloudflare TURN unavailable, falling back to default STUN: set CLOUDFLARE_TURN_KEY_ID and CLOUDFLARE_TURN_KEY_API_TOKEN');
+        return cloneIceServers();
+    }
+
+    let failure = 'credential request failed';
+    try {
+        const response = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate-ice-servers`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${apiToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ ttl: 86400 }),
+            signal: AbortSignal.timeout(10000)
+        });
+        failure = `HTTP ${response.status}`;
+        if (!response.ok) throw new Error(failure);
+
+        failure = 'invalid ICE server response';
+        const { iceServers } = await response.json();
+        if (!Array.isArray(iceServers) || iceServers.length === 0) throw new Error(failure);
+        const servers = iceServers.map(({ urls, username, credential }) => {
+            const urlList = Array.isArray(urls) ? urls : [urls];
+            if (!urlList.length || !urlList.every(url => typeof url === 'string' && /^(stun|stuns|turn|turns):\S+$/.test(url))) {
+                throw new Error(failure);
+            }
+            if (urlList.some(url => /^turns?:/.test(url)) &&
+                !(typeof username === 'string' && username && typeof credential === 'string' && credential)) {
+                throw new Error(failure);
+            }
+            return { urls, username, credential };
+        });
+        console.log('Using Cloudflare TURN/STUN configuration');
+        return servers;
+    } catch {
+        // Do not log response bodies or fetch errors: they may contain secrets.
+        console.warn(`Cloudflare TURN unavailable, falling back to default STUN: ${failure}`);
+        return cloneIceServers();
+    }
+}
+
+async function buildRtcConfig(options = {}) {
     const transport = options.transport === 'relay' ? 'relay' : 'direct';
     const relayAvailable = isRelayAvailable();
 
     const config = {
         transport,
         relayAvailable,
-        iceServers: cloneIceServers(),
+        iceServers: transport === 'direct' ? await getCloudflareIceServers() : cloneIceServers(),
         iceCandidatePoolSize: DEFAULT_ICE_CANDIDATE_POOL_SIZE
     };
 
